@@ -6,6 +6,7 @@ package uk.co.drnaylor.quickstart;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import ninja.leaping.configurate.ConfigurationNode;
 import ninja.leaping.configurate.ConfigurationOptions;
@@ -48,7 +49,7 @@ import javax.annotation.Nullable;
  * file generation, loading and enabling of modules.
  *
  * <p>
- *     A system may have multiple module containers. Each module container is completely separate from one another.
+ * A system may have multiple module containers. Each module container is completely separate from one another.
  * </p>
  */
 public abstract class ModuleContainer {
@@ -126,7 +127,8 @@ public abstract class ModuleContainer {
     /**
      * The header of the configuration section that contains the module flags
      */
-    @Nullable private final String moduleSectionHeader;
+    @Nullable
+    private final String moduleSectionHeader;
 
     /**
      * Constructs a {@link ModuleContainer} and starts discovery of the modules.
@@ -145,7 +147,6 @@ public abstract class ModuleContainer {
      * @param descriptionProcessor The {@link Function} to use when adding descriptions to modules. {@code null} means no descriptions.
      * @param moduleSection        The name of the section that contains the module enable/disable switches.
      * @param moduleSectionHeader  The comment header for the "module" section
-     *
      * @throws QuickStartModuleDiscoveryException if there is an error starting the Module Container.
      */
     protected <N extends ConfigurationNode> ModuleContainer(ConfigurationLoader<N> configurationLoader,
@@ -161,7 +162,7 @@ public abstract class ModuleContainer {
                                                             @Nullable Function<Class<? extends Module>, String> descriptionProcessor,
                                                             String moduleSection,
                                                             @Nullable String moduleSectionHeader
-            ) throws QuickStartModuleDiscoveryException {
+    ) throws QuickStartModuleDiscoveryException {
 
         try {
             this.config = new SystemConfig<>(configurationLoader, loggerProxy, configOptions);
@@ -260,30 +261,41 @@ public abstract class ModuleContainer {
     }
 
     private void resolveDependencyOrder(Map<String, ModuleSpec> modules) throws Exception {
-        // First, get the modules that have no deps.
-        processDependencyStep(modules, x -> x.getValue().getDependencies().isEmpty() && x.getValue().getSoftDependencies().isEmpty());
+        List<String> visited = Lists.newArrayList();
 
-        while (!modules.isEmpty()) {
-            Set<String> addedModules = discoveredModules.keySet();
-            processDependencyStep(modules, x -> addedModules.containsAll(x.getValue().getDependencies()) && addedModules.containsAll(x.getValue().getSoftDependencies()));
+        for (ModuleSpec module : modules.values()) {
+            processDependencyStep(modules, module, visited);
         }
     }
 
-    private void processDependencyStep(Map<String, ModuleSpec> modules, Predicate<Map.Entry<String, ModuleSpec>> predicate) throws Exception {
-        // Filter on the predicate
-        List<Map.Entry<String, ModuleSpec>> modulesToAdd = modules.entrySet().stream().filter(predicate)
-                .sorted((x, y) -> x.getValue().isMandatory() == y.getValue().isMandatory() ? x.getKey().compareTo(y.getKey()) : Boolean.compare(x.getValue().isMandatory(), y.getValue().isMandatory()))
-                .collect(Collectors.toList());
+    private void processDependencyStep(Map<String, ModuleSpec> modules, ModuleSpec module, List<String> visited) {
+        if (!visited.contains(module.getId())) {
+            visited.add(module.getId());
 
-        if (modulesToAdd.isEmpty()) {
-            throw new IllegalStateException("Some modules have circular dependencies: " + modules.keySet().stream().collect(Collectors.joining(", ")));
+            for (String softDepId : module.getSoftDependencies()) {
+                ModuleSpec spec = modules.get(softDepId);
+                if (spec == null) {
+                    throw new IllegalStateException("SoftDependency " + softDepId + " from Module " + module.getId() + " not Found!");
+                }
+
+                processDependencyStep(modules, modules.get(softDepId), visited);
+            }
+
+            for (String depId : module.getDependencies()) {
+                ModuleSpec spec = modules.get(depId);
+                if (spec == null) {
+                    throw new IllegalStateException("Dependency " + depId + " from Module " + module.getId() + " not Found!");
+                }
+
+                processDependencyStep(modules, modules.get(depId), visited);
+            }
+
+            this.discoveredModules.put(module.getId(), module);
+        } else {
+            if (!this.discoveredModules.containsKey(module.getId())) {
+                throw new IllegalStateException("Module has caused a circular dependency: " + String.join(", ", module.getId()));
+            }
         }
-
-        modulesToAdd.forEach(x -> {
-            discoveredModules.put(x.getKey(), x.getValue());
-            modules.remove(x.getKey());
-        });
-
     }
 
     private boolean dependenciesSatisfied(ModuleSpec moduleSpec, Set<String> enabledModules) {
@@ -370,7 +382,7 @@ public abstract class ModuleContainer {
      *
      * @param moduleName The ID of the module.
      * @throws UndisableableModuleException if the module can't be disabled.
-     * @throws NoModuleException if the module does not exist.
+     * @throws NoModuleException            if the module does not exist.
      */
     public void disableModule(String moduleName) throws UndisableableModuleException, NoModuleException {
         if (currentPhase == ConstructionPhase.DISCOVERED) {
@@ -410,14 +422,13 @@ public abstract class ModuleContainer {
      * Starts the module construction and enabling phase. This is the final phase for loading the modules.
      *
      * <p>
-     *     Once this method is called, modules can no longer be removed.
+     * Once this method is called, modules can no longer be removed.
      * </p>
      *
      * @param failOnOneError If set to <code>true</code>, one module failure will mark the whole loading sequence as failed.
      *                       Otherwise, no modules being constructed will cause a failure.
-     *
      * @throws QuickStartModuleLoaderException.Construction if the modules cannot be constructed.
-     * @throws QuickStartModuleLoaderException.Enabling if the modules cannot be enabled.
+     * @throws QuickStartModuleLoaderException.Enabling     if the modules cannot be enabled.
      */
     public void loadModules(boolean failOnOneError) throws QuickStartModuleLoaderException.Construction, QuickStartModuleLoaderException.Enabling {
         Preconditions.checkArgument(currentPhase == ConstructionPhase.DISCOVERED);
@@ -589,7 +600,7 @@ public abstract class ModuleContainer {
 
         try {
             // Construction
-            Module.RuntimeDisableable module = (Module.RuntimeDisableable)getModule(ms);
+            Module.RuntimeDisableable module = (Module.RuntimeDisableable) getModule(ms);
             ms.setPhase(ModulePhase.CONSTRUCTED);
 
             module.checkExternalDependencies();
@@ -674,16 +685,22 @@ public abstract class ModuleContainer {
         protected ConfigurationLoader<? extends ConfigurationNode> configurationLoader;
         protected boolean requireAnnotation = false;
         protected LoggerProxy loggerProxy;
-        protected Procedure onPreEnable = () -> {};
-        protected Procedure onEnable = () -> {};
-        protected Procedure onPostEnable = () -> {};
+        protected Procedure onPreEnable = () -> {
+        };
+        protected Procedure onEnable = () -> {
+        };
+        protected Procedure onPostEnable = () -> {
+        };
         protected Function<ConfigurationOptions, ConfigurationOptions> configurationOptionsTransformer = x -> x;
         protected ModuleEnabler enabler = ModuleEnabler.SIMPLE_INSTANCE;
         protected boolean doNotMerge = false;
-        @Nullable protected Function<Class<? extends Module>, String> moduleDescriptionHandler = null;
-        @Nullable protected Function<Module, String> moduleConfigurationHeader = null;
+        @Nullable
+        protected Function<Class<? extends Module>, String> moduleDescriptionHandler = null;
+        @Nullable
+        protected Function<Module, String> moduleConfigurationHeader = null;
         protected String moduleConfigSection = "modules";
-        @Nullable protected String moduleDescription = null;
+        @Nullable
+        protected String moduleDescription = null;
 
         protected abstract T getThis();
 
@@ -703,7 +720,7 @@ public abstract class ModuleContainer {
          * to nodes when they are loaded.
          *
          * <p>
-         *     By default, just uses the {@link ConfigurationOptions} of the loader.
+         * By default, just uses the {@link ConfigurationOptions} of the loader.
          * </p>
          *
          * @param optionsTransformer The transformer
@@ -800,7 +817,7 @@ public abstract class ModuleContainer {
          * Sets the function that is used to set the description for each module in the configuration file.
          *
          * <p>
-         *     This is displayed above each of the module toggles in the configuration file.
+         * This is displayed above each of the module toggles in the configuration file.
          * </p>
          *
          * @param handler The {@link Function} to use, or {@code null} otherwise.
@@ -815,7 +832,7 @@ public abstract class ModuleContainer {
          * Sets the function that is used to set the header for each module's configuration block in the configuration file.
          *
          * <p>
-         *     This is displayed above each of the configuration sections in the configuration file.
+         * This is displayed above each of the configuration sections in the configuration file.
          * </p>
          *
          * @param header The {@link Function} to use, or {@code null} otherwise.
@@ -925,7 +942,7 @@ public abstract class ModuleContainer {
                 enabler.enableModule(module);
                 ms.setPhase(ModulePhase.ENABLED);
                 if (module instanceof Module.RuntimeDisableable) {
-                    moduleContainer.enabledDisableableModules.put(ms.getId(), (Module.RuntimeDisableable)module);
+                    moduleContainer.enabledDisableableModules.put(ms.getId(), (Module.RuntimeDisableable) module);
                 }
             }
         },
