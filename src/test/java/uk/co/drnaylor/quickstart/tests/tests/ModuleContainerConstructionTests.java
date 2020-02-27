@@ -18,7 +18,7 @@ import uk.co.drnaylor.quickstart.exceptions.QuickStartModuleLoaderException;
 import uk.co.drnaylor.quickstart.tests.config.adapters.SimpleWithDefault;
 import uk.co.drnaylor.quickstart.tests.scaffolding.FakeLoaderTests;
 
-import java.util.Set;
+import java.util.List;
 
 public class ModuleContainerConstructionTests extends FakeLoaderTests {
 
@@ -83,7 +83,7 @@ public class ModuleContainerConstructionTests extends FakeLoaderTests {
         ModuleContainer mc = getContainer("uk.co.drnaylor.quickstart.tests.modules.modulestates");
         mc.loadModules(true);
 
-        Set<String> ss = mc.getModules(ModuleContainer.ModuleStatusTristate.ENABLE);
+        List<String> ss = mc.getModules(ModuleContainer.ModuleStatusTristate.ENABLE);
         Assert.assertTrue(ss.contains("man"));
         Assert.assertTrue(ss.contains("fl"));
         Assert.assertFalse(ss.contains("dis"));
@@ -95,7 +95,7 @@ public class ModuleContainerConstructionTests extends FakeLoaderTests {
         ModuleContainer mc = getContainer("uk.co.drnaylor.quickstart.tests.modules.exceptions.onefail");
         mc.loadModules(false);
 
-        Set<String> ss = mc.getModules(ModuleContainer.ModuleStatusTristate.ENABLE);
+        List<String> ss = mc.getModules(ModuleContainer.ModuleStatusTristate.ENABLE);
         Assert.assertTrue(ss.contains("prepass"));
         Assert.assertFalse(ss.contains("prefail"));
     }

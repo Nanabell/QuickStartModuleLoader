@@ -30,13 +30,8 @@ import uk.co.drnaylor.quickstart.loaders.ModuleEnabler;
 
 import java.io.IOException;
 import java.text.MessageFormat;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -298,7 +293,7 @@ public abstract class ModuleContainer {
         }
     }
 
-    private boolean dependenciesSatisfied(ModuleSpec moduleSpec, Set<String> enabledModules) {
+    private boolean dependenciesSatisfied(ModuleSpec moduleSpec, List<String> enabledModules) {
         if (moduleSpec.getDependencies().isEmpty()) {
             return true;
         }
@@ -329,7 +324,7 @@ public abstract class ModuleContainer {
      *
      * @return The modules that are going to be loaded.
      */
-    public Set<String> getModules() {
+    public List<String> getModules() {
         return getModules(ModuleStatusTristate.ENABLE);
     }
 
@@ -339,10 +334,13 @@ public abstract class ModuleContainer {
      * @param enabledOnly If <code>true</code>, only return modules that are going to be loaded.
      * @return The modules.
      */
-    public Set<String> getModules(final ModuleStatusTristate enabledOnly) {
+    public List<String> getModules(final ModuleStatusTristate enabledOnly) {
         Preconditions.checkNotNull(enabledOnly);
         Preconditions.checkState(currentPhase != ConstructionPhase.INITALISED && currentPhase != ConstructionPhase.DISCOVERING);
-        return discoveredModules.entrySet().stream().filter(enabledOnly.statusPredicate).map(Map.Entry::getKey).collect(Collectors.toSet());
+        return discoveredModules.entrySet().stream()
+                .filter(enabledOnly.statusPredicate)
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toList());
     }
 
     /**
@@ -435,7 +433,7 @@ public abstract class ModuleContainer {
         currentPhase = ConstructionPhase.ENABLING;
 
         // Get the modules that are being disabled and mark them as such.
-        Set<String> disabledModules = getModules(ModuleStatusTristate.DISABLE);
+        List<String> disabledModules = getModules(ModuleStatusTristate.DISABLE);
         while (!disabledModules.isEmpty()) {
             // Find any modules that have dependencies on disabled modules, and disable them.
             List<ModuleSpec> toDisable = getModules(ModuleStatusTristate.ENABLE).stream().map(discoveredModules::get)
@@ -462,7 +460,7 @@ public abstract class ModuleContainer {
         getModules(ModuleStatusTristate.DISABLE).forEach(k -> discoveredModules.get(k).setPhase(ModulePhase.DISABLED));
 
         // Modules to enable.
-        Map<String, Module> modules = Maps.newConcurrentMap();
+        Map<String, Module> modules = Collections.synchronizedMap(new LinkedHashMap<>());
 
         // Construct them
         for (String s : getModules(ModuleStatusTristate.ENABLE)) {
@@ -536,7 +534,7 @@ public abstract class ModuleContainer {
         }
 
         // Enter Enable phase.
-        Map<String, Module> c = new HashMap<>(modules);
+        Map<String, Module> c = new LinkedHashMap<>(modules);
 
         for (EnablePhase v : EnablePhase.values()) {
             loggerProxy.info(String.format("Starting phase: %s", v.name()));
